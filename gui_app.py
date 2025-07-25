@@ -1,4 +1,4 @@
-# gui_app.py
+# gui_app.py (Refactored for Public Demo)
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
@@ -16,12 +16,12 @@ import os
 # Local .pkl source
 DATA_DIR = "data_exports"
 ENDPOINTS = {
-    "astar_routes": os.path.join(DATA_DIR, "astar_routes.pkl"),
-    "mapf_routes": os.path.join(DATA_DIR, "mapf_routes.pkl"),
-    "user_patterns": os.path.join(DATA_DIR, "user_patterns.pkl"),
-    "hotspots": os.path.join(DATA_DIR, "hotspots.pkl"),
-    "view_latest_client_trajectories": os.path.join(DATA_DIR, "view_latest_client_trajectories.pkl"),
-    "predicted_pois_sequence": os.path.join(DATA_DIR, "predicted_pois_sequence.pkl")
+    "direct_paths": os.path.join(DATA_DIR, "astar_routes.pkl"),
+    "optimized_paths": os.path.join(DATA_DIR, "mapf_routes.pkl"),
+    "user_segments": os.path.join(DATA_DIR, "user_patterns.pkl"),
+    "density_map": os.path.join(DATA_DIR, "hotspots.pkl"),
+    "client_paths": os.path.join(DATA_DIR, "view_latest_client_trajectories.pkl"),
+    "future_sites": os.path.join(DATA_DIR, "predicted_pois_sequence.pkl")
 }
 
 def fetch_full(endpoint_name):
@@ -52,22 +52,30 @@ def build_point_gdf(df):
 
 # UI Init
 st.set_page_config(layout="wide")
-st.title("UrbanOS Result Viewer")
+st.title("Mobility Insight Viewer")
 
-option = st.sidebar.selectbox("Choose dataset", list(ENDPOINTS.keys()) + ["compare_routes"])
+st.markdown(
+    "This interface presents anonymized movement insights derived from real-world data. "
+    "Each layer offers a unique view of travel behavior, crowd patterns, or route suggestions."
+)
 
-# Pattern Filter Logic
-client_filter_applies = option in {"astar_routes", "mapf_routes", "view_latest_client_trajectories", "predicted_pois_sequence"}
+option = st.sidebar.selectbox(
+    "Choose a layer to explore:",
+    list(ENDPOINTS.keys()) + ["compare_movements"]
+)
+
+# Filter logic for client-scoped layers
+client_filter_applies = option in {"direct_paths", "optimized_paths", "client_paths", "future_sites"}
 client_ids = None
 
 if client_filter_applies:
-    df_patterns = fetch_full("user_patterns").dropna(subset=["client_id", "pattern_type"])
+    df_patterns = fetch_full("user_segments").dropna(subset=["client_id", "pattern_type"])
     grouped = df_patterns.groupby("pattern_type")["client_id"].apply(list).to_dict()
-    selected_pattern = st.sidebar.selectbox("Pattern type:", sorted(grouped))
+    selected_pattern = st.sidebar.selectbox("User Group:", sorted(grouped))
     selected_client = st.sidebar.selectbox("Client ID:", ["Show All"] + sorted(grouped[selected_pattern]))
     client_ids = grouped[selected_pattern] if selected_client == "Show All" else [selected_client]
 
-df = fetch_full(option) if option != "compare_routes" else None
+df = fetch_full(option) if option != "compare_movements" else None
 if df is not None and not df.empty:
     if client_filter_applies and "client_id" in df.columns and client_ids:
         df = df[df["client_id"].isin(client_ids)]
@@ -76,27 +84,25 @@ if df is not None and not df.empty:
 # -------------------------------
 # MAPS AND VISUALIZATIONS
 # -------------------------------
-if option == "astar_routes":
+if option == "direct_paths":
     df["path_geom"] = df["path"].apply(parse_path)
     gdf = gpd.GeoDataFrame(df.dropna(subset=["path_geom"]), geometry="path_geom", crs="EPSG:4326")
     if not gdf.empty:
         m = folium.Map(location=[gdf.geometry.centroid.y.mean(), gdf.geometry.centroid.x.mean()], zoom_start=14)
         for _, row in gdf.iterrows():
-            folium.PolyLine([(lat, lon) for lon, lat in row["path_geom"].coords],
-                            color="blue", weight=3).add_to(m)
+            folium.PolyLine([(lat, lon) for lon, lat in row["path_geom"].coords], color="blue", weight=3).add_to(m)
         st_folium(m, width=1000, height=600)
 
-elif option == "mapf_routes":
+elif option == "optimized_paths":
     df["path_geom"] = df["path"].apply(parse_path)
     gdf = gpd.GeoDataFrame(df.dropna(subset=["path_geom"]), geometry="path_geom", crs="EPSG:4326")
     if not gdf.empty:
         m = folium.Map(location=[gdf.geometry.centroid.y.mean(), gdf.geometry.centroid.x.mean()], zoom_start=14)
         for _, row in gdf.iterrows():
-            folium.PolyLine([(lat, lon) for lon, lat in row["path_geom"].coords],
-                            color="orange", weight=3).add_to(m)
+            folium.PolyLine([(lat, lon) for lon, lat in row["path_geom"].coords], color="orange", weight=3).add_to(m)
         st_folium(m, width=1000, height=600)
 
-elif option == "user_patterns":
+elif option == "user_segments":
     gdf = build_point_gdf(df)
     if not gdf.empty:
         cmap = colormaps["Set1"]
@@ -113,9 +119,9 @@ elif option == "user_patterns":
             ).add_to(m)
         st_folium(m, width=1000, height=600)
 
-elif option == "hotspots":
+elif option == "density_map":
     df["updated_at"] = pd.to_datetime(df["updated_at"])
-    df_traj = fetch_full("view_latest_client_trajectories")
+    df_traj = fetch_full("client_paths")
     df_traj["created_at"] = pd.to_datetime(df_traj["created_at"])
     available_dates = df_traj["created_at"].dt.date.unique()
     selected_date = st.date_input("Select animation date:", value=sorted(available_dates)[-1])
@@ -138,7 +144,7 @@ elif option == "hotspots":
                 HeatMap(gdf[["lat", "lon"]].values.tolist(), radius=12).add_to(m)
                 st_folium(m, width=1000, height=600)
 
-elif option == "view_latest_client_trajectories":
+elif option == "client_paths":
     df["trajectory"] = df["trajectory"].apply(lambda x: x if isinstance(x, list) else [])
     m = folium.Map(location=[59.3, 18.0], zoom_start=11)
     for _, row in df.iterrows():
@@ -147,7 +153,7 @@ elif option == "view_latest_client_trajectories":
             folium.PolyLine(points, color="green", weight=2.5, opacity=0.6).add_to(m)
     st_folium(m, width=1000, height=600)
 
-elif option == "predicted_pois_sequence":
+elif option == "future_sites":
     gdf = build_point_gdf(df)
     if not gdf.empty:
         m = folium.Map(location=[gdf.geometry.y.mean(), gdf.geometry.x.mean()], zoom_start=13)
@@ -159,18 +165,18 @@ elif option == "predicted_pois_sequence":
             ).add_to(m)
         st_folium(m, width=1000, height=600)
 
-elif option == "compare_routes":
-    st.subheader("Compare routes and Trajectory for a Client")
-    df_patterns = fetch_full("user_patterns").dropna(subset=["client_id", "pattern_type"])
+elif option == "compare_movements":
+    st.subheader("Compare Paths and Movement History")
+    df_patterns = fetch_full("user_segments").dropna(subset=["client_id", "pattern_type"])
     grouped = df_patterns.groupby("pattern_type")["client_id"].apply(list).to_dict()
-    selected_pattern = st.selectbox("Pattern type:", sorted(grouped))
+    selected_pattern = st.selectbox("User Group:", sorted(grouped))
     selected_client = st.selectbox("Client ID:", ["Show All"] + sorted(grouped[selected_pattern]))
     client_ids = grouped[selected_pattern] if selected_client == "Show All" else [selected_client]
-    color_by = st.radio("Color paths by:", ["path_type", "client_id"])
+    color_by = st.radio("Color by:", ["path_type", "client_id"])
 
-    df_astar = fetch_full("astar_routes")
-    df_mapf = fetch_full("mapf_routes")
-    df_traj = fetch_full("view_latest_client_trajectories")
+    df_astar = fetch_full("direct_paths")
+    df_mapf = fetch_full("optimized_paths")
+    df_traj = fetch_full("client_paths")
 
     df_astar = df_astar[df_astar["client_id"].isin(client_ids)]
     df_mapf = df_mapf[df_mapf["client_id"].isin(client_ids)]
@@ -185,20 +191,21 @@ elif option == "compare_routes":
         if path:
             color = color_lookup[row["client_id"]] if color_by == "client_id" else "blue"
             folium.PolyLine([(lat, lon) for lon, lat in path.coords], color=color, weight=2.5,
-                            popup=f"A*: {row['client_id']}").add_to(m)
+                            popup=f"Free Path: {row['client_id']}").add_to(m)
 
     for _, row in df_mapf.iterrows():
         path = parse_path(row["path"])
         if path:
             color = color_lookup[row["client_id"]] if color_by == "client_id" else "brown"
             folium.PolyLine([(lat, lon) for lon, lat in path.coords], color=color, weight=2.5,
-                            popup=f"MAPF: {row['client_id']}").add_to(m)
+                            popup=f"Optimized Path: {row['client_id']}").add_to(m)
 
     for _, row in df_traj.iterrows():
         if isinstance(row["trajectory"], list):
             points = [(float(p["lat"]), float(p["lon"])) for p in row["trajectory"]]
             if points:
                 color = color_lookup[row["client_id"]] if color_by == "client_id" else "purple"
-                folium.PolyLine(points, color=color, weight=2, popup=f"Trajectory: {row['client_id']}").add_to(m)
+                folium.PolyLine(points, color=color, weight=2,
+                                popup=f"Recorded: {row['client_id']}").add_to(m)
 
     st_folium(m, width=1000, height=600)
