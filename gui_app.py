@@ -11,6 +11,25 @@ from matplotlib import colormaps
 from matplotlib.colors import to_hex
 import time
 import os
+import bz2
+import shutil
+
+
+def decompress_pickle(path_bz2):
+    path_pkl = path_bz2.replace(".bz2", "")
+    if not os.path.exists(path_pkl):
+        with bz2.open(path_bz2, 'rb') as f_in, open(path_pkl, 'wb') as f_out:
+            shutil.copyfileobj(f_in, f_out)
+        print(f"✅ Decompressed: {path_bz2} → {path_pkl}")
+
+# Decompress needed .bz2 files
+bz2_files = [
+    "data_exports/view_latest_client_trajectories.pkl.bz2",
+]
+for file in bz2_files:
+    if os.path.exists(file):
+        decompress_pickle(file)
+
 
 # Local .pkl source
 DATA_DIR = "data_exports"
