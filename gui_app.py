@@ -55,16 +55,6 @@ def fetch_full(name):
     return PRELOADED_DATA.get(name, pd.DataFrame())
 
 
-# 🧠 Preload all dataframes into memory at app start
-PRELOADED_DATA = {}
-for key, path in ENDPOINTS.items():
-    try:
-        PRELOADED_DATA[key] = pd.read_pickle(path)
-    except Exception as e:
-        PRELOADED_DATA[key] = pd.DataFrame()
-        st.warning(f"Warning loading {key}: {e}")
-
-
 def fetch_full(name):
     return PRELOADED_DATA.get(name, pd.DataFrame())
 
