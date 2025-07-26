@@ -273,8 +273,7 @@ elif infra_tab == "Patterns and Stops":
     gdf_pat = PRELOADED_GDF["user_patterns"]
     gdf_stop = PRELOADED_GDF["stop_points"]
 
-    if not pat_df.empty and not stop_df.empty:
-        
+    if not gdf_pat.empty and not gdf_stop.empty:        
         
 
         # Optional filter
