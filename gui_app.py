@@ -13,6 +13,10 @@ import time
 import os
 import bz2
 import shutil
+from uos_utils import (
+    decompress_pickle, parse_path_cached,
+    build_point_gdf, preload_data, preload_geodf
+)
 
 
 def decompress_pickle(path_bz2):
@@ -22,17 +26,11 @@ def decompress_pickle(path_bz2):
             shutil.copyfileobj(f_in, f_out)
         print(f"✅ Decompressed: {path_bz2} → {path_pkl}")
 
-# Decompress needed .bz2 files
-bz2_files = [
-    "data_exports/view_latest_client_trajectories.pkl.bz2",
-]
-for file in bz2_files:
-    if os.path.exists(file):
-        decompress_pickle(file)
+# 📦 Decompress .bz2 files if needed
+for bz2_file in ["data_exports/view_latest_client_trajectories.pkl.bz2"]:
+    decompress_pickle(bz2_file)
 
-
-# Local .pkl source
-DATA_DIR = "data_exports"
+# 🗂️ Define endpoints
 ENDPOINTS = {
     "astar_routes": "data_exports/astar_routes.pkl",
     "mapf_routes": "data_exports/mapf_routes.pkl",
@@ -46,32 +44,15 @@ ENDPOINTS = {
     "view_top_daily_poi": "data_exports/view_top_daily_poi.pkl"
 }
 
+# 🚀 Load all data once at startup
+PRELOADED_DATA = preload_data(ENDPOINTS)
 
-def fetch_full(endpoint_name):
-    try:
-        return pd.read_pickle(ENDPOINTS[endpoint_name])
-    except Exception as e:
-        st.error(f"Failed to load {endpoint_name}.pkl: {e}")
-        return pd.DataFrame()
+# 🌍 Pre-build spatial dataframes for common visuals
+PRELOADED_GDF = preload_geodf(PRELOADED_DATA, keys_to_build=["user_patterns", "stop_points"])
 
-def parse_path(path_wkb_hex):
-    try:
-        return wkb.loads(binascii.unhexlify(path_wkb_hex), hex=True)
-    except Exception:
-        return None
-
-def build_point_gdf(df):
-    if "lat" in df.columns and "lon" in df.columns:
-        df = df.dropna(subset=["lat", "lon"])
-        geometry = [Point(lon, lat) for lon, lat in zip(df["lon"], df["lat"])]
-    elif "predicted_lat" in df.columns and "predicted_lon" in df.columns:
-        df = df.dropna(subset=["predicted_lat", "predicted_lon"])
-        geometry = [Point(lon, lat) for lon, lat in zip(df["predicted_lon"], df["predicted_lat"])]
-    elif "geometry" in df.columns:
-        geometry = gpd.GeoSeries.from_wkt(df["geometry"])
-    else:
-        raise ValueError("Missing coordinates or geometry column.")
-    return gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
+# 🔁 Centralized fetch
+def fetch_full(name):
+    return PRELOADED_DATA.get(name, pd.DataFrame())
 
 
 # 🧠 Preload all dataframes into memory at app start
@@ -115,7 +96,7 @@ if df is not None and not df.empty:
 # MAPS AND VISUALIZATIONS
 # -------------------------------
 if option == "astar_routes":
-    df["path_geom"] = df["path"].apply(parse_path)
+    df["path_geom"] = df["path"].apply(parse_path_cached)
     gdf = gpd.GeoDataFrame(df.dropna(subset=["path_geom"]), geometry="path_geom", crs="EPSG:4326")
     if not gdf.empty:
         m = folium.Map(location=[gdf.geometry.centroid.y.mean(), gdf.geometry.centroid.x.mean()], zoom_start=14)
@@ -125,7 +106,7 @@ if option == "astar_routes":
         st_folium(m, width=1000, height=600)
 
 elif option == "mapf_routes":
-    df["path_geom"] = df["path"].apply(parse_path)
+    df["path_geom"] = df["path"].apply(parse_path_cached)
     gdf = gpd.GeoDataFrame(df.dropna(subset=["path_geom"]), geometry="path_geom", crs="EPSG:4326")
     if not gdf.empty:
         m = folium.Map(location=[gdf.geometry.centroid.y.mean(), gdf.geometry.centroid.x.mean()], zoom_start=14)
@@ -135,7 +116,7 @@ elif option == "mapf_routes":
         st_folium(m, width=1000, height=600)
 
 elif option == "user_patterns":
-    gdf = build_point_gdf(df)
+    gdf = PRELOADED_GDF.get(option, pd.DataFrame())
     if not gdf.empty:
         cmap = colormaps["Set1"]
         color_lookup = {pt: to_hex(cmap(i % cmap.N)) for i, pt in enumerate(gdf["pattern_type"].unique())}
@@ -186,7 +167,7 @@ elif option == "view_latest_client_trajectories":
     st_folium(m, width=1000, height=600)
 
 elif option == "predicted_pois_sequence":
-    gdf = build_point_gdf(df)
+    gdf = PRELOADED_GDF.get(option, pd.DataFrame())
     if not gdf.empty:
         m = folium.Map(location=[gdf.geometry.y.mean(), gdf.geometry.x.mean()], zoom_start=13)
         for _, row in gdf.iterrows():
@@ -219,14 +200,14 @@ elif option == "compare_routes":
     m = folium.Map(location=[59.3, 18.0], zoom_start=12)
 
     for _, row in df_astar.iterrows():
-        path = parse_path(row["path"])
+        path = parse_path_cached(row["path"])
         if path:
             color = color_lookup[row["client_id"]] if color_by == "client_id" else "blue"
             folium.PolyLine([(lat, lon) for lon, lat in path.coords], color=color, weight=2.5,
                             popup=f"A*: {row['client_id']}").add_to(m)
 
     for _, row in df_mapf.iterrows():
-        path = parse_path(row["path"])
+        path = parse_path_cached(row["path"])
         if path:
             color = color_lookup[row["client_id"]] if color_by == "client_id" else "brown"
             folium.PolyLine([(lat, lon) for lon, lat in path.coords], color=color, weight=2.5,
@@ -251,7 +232,7 @@ if infra_tab == "Stop Points":
     st.subheader("🧭 Public Infrastructure: Stop Points")
     df = fetch_full("stop_points")
     if not df.empty:
-        gdf = build_point_gdf(df)
+        gdf = PRELOADED_GDF.get(option, pd.DataFrame())
         m = folium.Map(location=[gdf.geometry.y.mean(), gdf.geometry.x.mean()], zoom_start=12)
         for _, row in gdf.iterrows():
             folium.CircleMarker(
@@ -289,12 +270,12 @@ elif infra_tab == "Lines":
 
 elif infra_tab == "Patterns and Stops":
     st.subheader("🌍 Combined View: User Patterns + Stop Points")
-    pat_df = fetch_full("user_patterns")
-    stop_df = fetch_full("stop_points")
+    gdf_pat = PRELOADED_GDF["user_patterns"]
+    gdf_stop = PRELOADED_GDF["stop_points"]
 
     if not pat_df.empty and not stop_df.empty:
-        gdf_pat = build_point_gdf(pat_df)
-        gdf_stop = build_point_gdf(stop_df)
+        
+        
 
         # Optional filter
         transport_types = gdf_stop["type"].dropna().unique()
