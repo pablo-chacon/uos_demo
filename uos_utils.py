@@ -1,3 +1,4 @@
+import streamlit as st
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
@@ -6,7 +7,6 @@ import binascii
 import bz2
 import shutil
 import os
-import streamlit as st
 
 def decompress_pickle(path_bz2):
     path_pkl = path_bz2.replace(".bz2", "")
@@ -21,7 +21,7 @@ def parse_path(path_wkb_hex):
     except Exception:
         return None
 
-@st.cache_data
+@st.cache_data(show_spinner="Loading geopaths…")
 def parse_path_cached(path_wkb_hex):
     return parse_path(path_wkb_hex)
 
@@ -38,6 +38,7 @@ def build_point_gdf(df):
         raise ValueError("Missing coordinates or geometry column.")
     return gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
 
+@st.cache_data(show_spinner="Loading dataset…")
 def preload_data(endpoints):
     preloaded = {}
     for key, path in endpoints.items():
@@ -48,6 +49,7 @@ def preload_data(endpoints):
             st.warning(f"⚠️ Warning loading {key}: {e}")
     return preloaded
 
+@st.cache_data(show_spinner="Parsing geospatial data…")
 def preload_geodf(preloaded_df, keys_to_build):
     geodfs = {}
     for key in keys_to_build:
@@ -55,5 +57,5 @@ def preload_geodf(preloaded_df, keys_to_build):
             geodfs[key] = build_point_gdf(preloaded_df.get(key, pd.DataFrame()))
         except Exception as e:
             geodfs[key] = gpd.GeoDataFrame()
-            st.warning(f"⚠️ Warning building GeoDataFrame for {key}: {e}")
+            st.warning(f"⚠️ Error building GeoDataFrame for {key}: {e}")
     return geodfs
